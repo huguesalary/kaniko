@@ -81,6 +81,12 @@ var RootCmd = &cobra.Command{
 		if err := executor.CheckPushPermissions(opts); err != nil {
 			exit(errors.Wrap(err, "error checking push permissions -- make sure you entered the correct tag name, and that you are authenticated correctly, and try again"))
 		}
+		if err := resolveRelativePaths(); err != nil {
+			exit(errors.Wrap(err, "error resolving relative paths to absolute paths"))
+		}
+		if err := setCredentialFile(); err != nil {
+			exit(errors.Wrap(err, "error using credential file"))
+		}
 		if err := os.Chdir("/"); err != nil {
 			exit(errors.Wrap(err, "error changing to root dir"))
 		}
@@ -109,6 +115,13 @@ var RootCmd = &cobra.Command{
 	},
 }
 
+func setCredentialFile() error {
+	if opts.CredentialFile != "" {
+		return os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", opts.CredentialFile)
+	}
+	return nil
+}
+
 // addKanikoOptionsFlags configures opts
 func addKanikoOptionsFlags(cmd *cobra.Command) {
 	RootCmd.PersistentFlags().StringVarP(&opts.DockerfilePath, "dockerfile", "f", "Dockerfile", "Path to the dockerfile to be built.")
@@ -134,6 +147,7 @@ func addKanikoOptionsFlags(cmd *cobra.Command) {
 	RootCmd.PersistentFlags().DurationVarP(&opts.CacheTTL, "cache-ttl", "", time.Hour*336, "Cache timeout in hours. Defaults to two weeks.")
 	RootCmd.PersistentFlags().VarP(&opts.InsecureRegistries, "insecure-registry", "", "Insecure registry using plain HTTP to push and pull. Set it repeatedly for multiple registries.")
 	RootCmd.PersistentFlags().VarP(&opts.SkipTLSVerifyRegistries, "skip-tls-verify-registry", "", "Insecure registry ignoring TLS verify to push and pull. Set it repeatedly for multiple registries.")
+	RootCmd.PersistentFlags().StringVarP(&opts.CredentialFile, "credential-file", "", "", "If provided, this json file will be used to retrieve Service Account credentials. You may set the GOOGLE_APPLICATION_CREDENTIALS environment variable for the same effect.")
 }
 
 // addHiddenFlags marks certain flags as hidden from the executor help text
@@ -224,6 +238,38 @@ func resolveSourceContext() error {
 		return err
 	}
 	logrus.Debugf("Build context located at %s", opts.SrcContext)
+	return nil
+}
+
+func resolveRelativePaths() error {
+	optsPaths := []*string{
+		&opts.DockerfilePath,
+		&opts.SrcContext,
+		&opts.CacheDir,
+		&opts.TarPath,
+		&opts.DigestFile,
+		&opts.CredentialFile,
+	}
+
+	for _, p := range optsPaths {
+		// Skip empty path
+		if *p == "" {
+			continue
+		}
+		// Skip path that is already absolute
+		if filepath.IsAbs(*p) {
+			logrus.Debugf("Path %s is absolute, skipping", *p)
+			continue
+		}
+
+		// Resolve relative path to absolute path
+		var err error
+		absp := *p
+		if *p, err = filepath.Abs(*p); err != nil {
+			return errors.Wrapf(err, "Couldn't resolve relative path %s to an absolute path", *p)
+		}
+		logrus.Debugf("Resolved relative path %s to %s", *p, absp)
+	}
 	return nil
 }
 
